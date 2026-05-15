@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Cashnote Coupon Filter
 // @description  Show only 모바일 교환권 coupons on the coupons page
-// @match        https://market.cashnote.kr/*
+// @match        https://market.cashnote.kr/mypage/coupons
 // @run-at       document-end
 // ==/UserScript==
 
@@ -42,25 +42,57 @@
 
   // ─── 2. Filter rendered coupon cards ───────────────────────────────
   function filterCoupons() {
-    // Find all coupon list items by looking at the rendered DOM
-    // The coupons page renders a list; each coupon card contains its name text
-    const allItems = document.querySelectorAll(
-      'ul > li, [class*="coupon"], [class*="Coupon"]'
-    );
+    // Get coupon data from __NEXT_DATA__ to know exact names
+    const el = document.getElementById('__NEXT_DATA__');
+    if (!el) return { hiddenCount: 0, shownCount: 0 };
 
+    let allCoupons = [];
+    try {
+      const data = JSON.parse(el.textContent);
+      const queries =
+        data?.props?.pageProps?.dehydratedState?.queries || [];
+      queries.forEach((q) => {
+        const items = q?.state?.data;
+        if (Array.isArray(items)) {
+          items.forEach((c) => {
+            if (c.name) allCoupons.push(c.name);
+          });
+        }
+      });
+    } catch (e) {
+      return { hiddenCount: 0, shownCount: 0 };
+    }
+
+    if (allCoupons.length === 0) return { hiddenCount: 0, shownCount: 0 };
+
+    // Find all li elements in the page
     let hiddenCount = 0;
     let shownCount = 0;
+    const processedLis = new Set();
 
-    allItems.forEach((item) => {
-      const text = item.textContent || '';
-      if (text.includes('할인') || text.includes('쿠폰')) {
-        // This looks like a coupon card
-        if (text.includes(FILTER_KEYWORD)) {
-          item.style.display = '';
-          shownCount++;
-        } else {
-          item.style.display = 'none';
-          hiddenCount++;
+    allCoupons.forEach((couponName) => {
+      // Find DOM elements containing this exact coupon name
+      const walker = document.createTreeWalker(
+        document.body,
+        NodeFilter.SHOW_TEXT,
+        null
+      );
+
+      while (walker.nextNode()) {
+        const node = walker.currentNode;
+        if (node.textContent.includes(couponName)) {
+          // Walk up to the closest li
+          const li = node.parentElement?.closest('li');
+          if (li && !processedLis.has(li)) {
+            processedLis.add(li);
+            if (couponName.includes(FILTER_KEYWORD)) {
+              li.style.display = '';
+              shownCount++;
+            } else {
+              li.style.display = 'none';
+              hiddenCount++;
+            }
+          }
         }
       }
     });
