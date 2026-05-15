@@ -8,103 +8,40 @@
 (function () {
   'use strict';
 
-  const COUPONS_PATH = '/mypage/coupons';
   const FILTER_KEYWORD = '모바일 교환권';
 
-  function isCouponsPage() {
-    return window.location.pathname === COUPONS_PATH;
-  }
-
-  // ─── 1. Parse __NEXT_DATA__ to get matching coupon IDs ─────────────
-  function getMatchingCouponNames() {
-    const el = document.getElementById('__NEXT_DATA__');
-    if (!el) return null;
-    try {
-      const data = JSON.parse(el.textContent);
-      const queries =
-        data?.props?.pageProps?.dehydratedState?.queries || [];
-      const coupons = [];
-      queries.forEach((q) => {
-        const items = q?.state?.data;
-        if (Array.isArray(items)) {
-          items.forEach((c) => {
-            if (c.name && c.name.includes(FILTER_KEYWORD)) {
-              coupons.push(c.name);
-            }
-          });
-        }
-      });
-      return coupons;
-    } catch (e) {
-      return null;
-    }
-  }
-
-  // ─── 2. Filter rendered coupon cards ───────────────────────────────
+  // ─── 1. Filter coupon cards by DOM structure ──────────────────────
   function filterCoupons() {
-    // Get coupon data from __NEXT_DATA__ to know exact names
-    const el = document.getElementById('__NEXT_DATA__');
-    if (!el) return { hiddenCount: 0, shownCount: 0 };
-
-    let allCoupons = [];
-    try {
-      const data = JSON.parse(el.textContent);
-      const queries =
-        data?.props?.pageProps?.dehydratedState?.queries || [];
-      queries.forEach((q) => {
-        const items = q?.state?.data;
-        if (Array.isArray(items)) {
-          items.forEach((c) => {
-            if (c.name) allCoupons.push(c.name);
-          });
-        }
-      });
-    } catch (e) {
-      return { hiddenCount: 0, shownCount: 0 };
-    }
-
-    if (allCoupons.length === 0) return { hiddenCount: 0, shownCount: 0 };
-
-    // Find all li elements in the page
+    // Each coupon card is a div[role="presentation"]
+    const cards = document.querySelectorAll('div[role="presentation"]');
     let hiddenCount = 0;
     let shownCount = 0;
-    const processedLis = new Set();
 
-    allCoupons.forEach((couponName) => {
-      // Find DOM elements containing this exact coupon name
-      const walker = document.createTreeWalker(
-        document.body,
-        NodeFilter.SHOW_TEXT,
-        null
+    cards.forEach((card) => {
+      // The coupon name is in a <p> with these classes
+      const nameEl = card.querySelector(
+        'p.typo-paragraph100-regular'
       );
+      if (!nameEl) return; // not a coupon card
 
-      while (walker.nextNode()) {
-        const node = walker.currentNode;
-        if (node.textContent.includes(couponName)) {
-          // Walk up to the closest li
-          const li = node.parentElement?.closest('li');
-          if (li && !processedLis.has(li)) {
-            processedLis.add(li);
-            if (couponName.includes(FILTER_KEYWORD)) {
-              li.style.display = '';
-              shownCount++;
-            } else {
-              li.style.display = 'none';
-              hiddenCount++;
-            }
-          }
-        }
+      const name = nameEl.textContent || '';
+      if (name.includes(FILTER_KEYWORD)) {
+        card.style.display = '';
+        shownCount++;
+      } else {
+        card.style.display = 'none';
+        hiddenCount++;
       }
     });
 
     return { hiddenCount, shownCount };
   }
 
-  // ─── 3. Add filter badge ──────────────────────────────────────────
+  // ─── 2. Filter badge ─────────────────────────────────────────────
   function addFilterBadge(shown, hidden) {
-    if (document.getElementById('cn-filter-badge')) {
-      const badge = document.getElementById('cn-filter-badge');
-      badge.textContent = `🎫 모바일 교환권 ${shown}개 표시 (${hidden}개 숨김)`;
+    const existing = document.getElementById('cn-filter-badge');
+    if (existing) {
+      existing.textContent = `🎫 모바일 교환권 ${shown}개 표시 (${hidden}개 숨김)`;
       return;
     }
 
@@ -129,72 +66,25 @@
       fontWeight: '600',
     });
     badge.textContent = `🎫 모바일 교환권 ${shown}개 표시 (${hidden}개 숨김)`;
-
     document.body.appendChild(badge);
   }
 
-  function removeFilterUI() {
-    const badge = document.getElementById('cn-filter-badge');
-    if (badge) badge.remove();
-  }
-
-  // ─── 4. Main logic ────────────────────────────────────────────────
+  // ─── 3. Run filter ───────────────────────────────────────────────
   function runFilter() {
-    if (!isCouponsPage()) {
-      removeFilterUI();
-      return;
-    }
-
     const result = filterCoupons();
     if (result.shownCount > 0 || result.hiddenCount > 0) {
       addFilterBadge(result.shownCount, result.hiddenCount);
     }
   }
 
-  // ─── 5. SPA navigation detection ─────────────────────────────────
-  const origPushState = history.pushState;
-  const origReplaceState = history.replaceState;
-
-  function onUrlChange() {
-    // Small delay to let React render
-    setTimeout(runFilter, 800);
-  }
-
-  history.pushState = function () {
-    origPushState.apply(this, arguments);
-    onUrlChange();
-  };
-
-  history.replaceState = function () {
-    origReplaceState.apply(this, arguments);
-    onUrlChange();
-  };
-
-  window.addEventListener('popstate', onUrlChange);
-
-  // ─── 6. Polling for initial load and re-renders ───────────────────
-  let pollTimer = null;
-
-  function startPolling() {
-    if (pollTimer) clearInterval(pollTimer);
-
-    pollTimer = setInterval(() => {
-      if (!isCouponsPage()) {
-        clearInterval(pollTimer);
-        removeFilterUI();
-        return;
-      }
+  // ─── 4. Poll until cards appear, then filter ─────────────────────
+  const poll = setInterval(() => {
+    const cards = document.querySelectorAll('div[role="presentation"]');
+    if (cards.length > 0) {
+      clearInterval(poll);
       runFilter();
-    }, 1000);
+    }
+  }, 500);
 
-    // Stop after 60 seconds
-    setTimeout(() => {
-      if (pollTimer) clearInterval(pollTimer);
-    }, 60000);
-  }
-
-  // ─── 7. Initial run ──────────────────────────────────────────────
-  if (isCouponsPage()) {
-    startPolling();
-  }
+  setTimeout(() => clearInterval(poll), 30000);
 })();
